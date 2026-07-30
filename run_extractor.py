@@ -123,24 +123,42 @@ class QpacExtractor(BaseExtractor):
 
         performances = []
 
-        
         sb.wait_for_ready_state_complete()
-        
+        try:
+            date_blocks = sb.find_elements(By.CSS_SELECTOR, SELECTORS["date_blocks"])
+            self.custom_logger.info(f" Found {len(date_blocks)} performance dates")
 
-                        performances.append(
-                            {
-                                "date": date_ymd,
-                                "time": time_hm,
-                                "selector": selector,
-                                "layout": "list",
-                                "data_local_date": formatted_iso,
-                            }
-                        )
-                    except Exception as inner_e:
-                        self.custom_logger.debug(
-                            f"Failed parsing event list row: {inner_e}"
+            for block in date_blocks:
+                try:
+                    date_time_text = block.get_text(SELECTORS["date_time_text"]).strip() or None
+
+                    if not date_time_text:
+                        self.custom_logger.info(
+                            " performance date_time_text not found "
                         )
                         continue
+
+                    self.custom_logger.info(f" performance date_string : {date_time_text}")
+
+                    date_ymd = parser.parse(date_time_text).strftime("%Y-%m-%d")
+                    #time_hm = parser.parse(raw_time_text).strftime("%H:%M")
+                    time_hm = convert_to_24hr(date_time_text)
+        
+
+                    performances.append(
+                        {
+                            "date": date_ymd,
+                            "time": time_hm,
+                            "selector": selector,
+                            "layout": "list",
+                            "data_local_date": formatted_iso,
+                        }
+                    )
+                except Exception as inner_e:
+                    self.custom_logger.debug(
+                        f"Failed parsing event list row: {inner_e}"
+                    )
+                    continue
 
         except Exception as e:
             self.custom_logger.debug(f"Calendar Grid extraction failed: {e}")
