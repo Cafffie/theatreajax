@@ -140,6 +140,8 @@ class QpacExtractor(BaseExtractor):
 
                     self.custom_logger.info(f" performance date_string : {date_time_text}")
 
+                    date_button = sb.find_elements(By.CSS_SELECTOR, SELECTORS["date_blocks"])
+
                     date_ymd = parser.parse(date_time_text).strftime("%Y-%m-%d")
                     #time_hm = parser.parse(raw_time_text).strftime("%H:%M")
                     time_hm = convert_to_24hr(date_time_text)
@@ -149,9 +151,7 @@ class QpacExtractor(BaseExtractor):
                         {
                             "date": date_ymd,
                             "time": time_hm,
-                            "selector": selector,
-                            "layout": "list",
-                            "data_local_date": formatted_iso,
+                            "date_button": date_button,
                         }
                     )
                 except Exception as inner_e:
