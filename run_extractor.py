@@ -15,6 +15,7 @@ from utils.base_extractor import BaseExtractor
 from utils.logger import setup_logger
 from utils.scraping_helpers import (
     convert_to_24hr,
+    parse_booking_dates,
     format_datetime_key,
     get_currency_from_price,
     get_scrape_datetime,
@@ -48,6 +49,7 @@ class TheatreAjaxExtractor(BaseExtractor):
             **kwargs,
         )
         self.all_data = []
+        self.show_details = []
 
     def safe_get(self, sb, url, wait=10):
         try:
@@ -77,22 +79,19 @@ class TheatreAjaxExtractor(BaseExtractor):
         except Exception:
             pass
 
-    def _get_show_details(self, sb) -> str | None:
-        """Extract show title."""
-
-        show_details= []
+    def _get_show_details(self, sb) -> list[dict]:
+        """Extract show details for all cards on the page."""
+        show_details = []
         try:
-            show_card = sb.find_element(SELECTORS["show_card"])
-            self.custom_logger.info(f"Found {len(show_card)} show cards for extraction.")
-            for card in show_card:
+            show_cards = sb.find_elements(SELECTORS["show_card"])
+            self.custom_logger.info(f"Found {len(show_cards)} show cards for extraction.")
+            for card in show_cards:
                 try:
                     title_elem = card.find_element(By.CSS_SELECTOR, SELECTORS["title"])
                     titles = title_elem.text.strip() if title_elem else ""
-                    self.custom_logger.info(f"Found title: {titles}")
                     
                     subtitle_elem = card.find_element(By.CSS_SELECTOR, SELECTORS["subtitle"])
                     subtitle = subtitle_elem.text.strip() if subtitle_elem else ""
-                    self.custom_logger.info(f"Found subtitle: {subtitle}")
 
                     open_date, close_date = None, None
                     try:
@@ -116,12 +115,13 @@ class TheatreAjaxExtractor(BaseExtractor):
                     })
 
                 except Exception as e:
-                    self.custom_logger.debug(f"Error occurred while extracting show details: {e}")
+                    self.custom_logger.debug(f"Error occurred while extracting individual show card: {e}")
                     continue
-            
+
         except Exception as e:
             self.custom_logger.debug(f"Show details extraction failed: {e}")
-            return show_details
+
+        return show_details
 
     def _get_terminal_dates(self, sb):
         """Extract show header dates."""
@@ -130,8 +130,6 @@ class TheatreAjaxExtractor(BaseExtractor):
         except Exception as e:
             self.custom_logger.debug(f"terminal date extraction failed: {e}")
             return None
-
-    
 
     def _get_event_venue(self, sb) -> dict | None:
         """Extract an event-specific venue from the current show page."""
@@ -151,20 +149,9 @@ class TheatreAjaxExtractor(BaseExtractor):
 
         return DEFAULT_THEATRE_DETAILS
 
-
-
     def _extract_performances(self, sb) -> list[dict]:
         """Parses performance instances directly from single or continuous date markers."""
         performances = []
-        #try:
-            #see_event_button = sb.find_elements(SELECTORS["see_event_button"])
-            #if see_event_button:
-                #sb.execute_script("arguments[0].click();", see_event_button)
-                #human_delay(2, 3)
-                #self.custom_logger.info("Clicked see_event_button.")
-        #except Exception as e:
-            #self.custom_logger.debug(f"Failed clicking 'See Event' button: {e}")
-
         sb.wait_for_ready_state_complete()
         try:
             date_blocks = sb.find_elements(By.CSS_SELECTOR, SELECTORS["date_blocks"])
@@ -176,12 +163,8 @@ class TheatreAjaxExtractor(BaseExtractor):
                     if not date_time_text:
                         continue
 
-                    self.custom_logger.info(f"Performance date_string: {date_time_text}")
-
                     date_ymd = parser.parse(date_time_text, fuzzy=True).strftime("%Y-%m-%d")
-                    #time_hm = convert_to_24hr(date_time_text)
                     time_hm = parser.parse(date_time_text, fuzzy=True).strftime("%H:%M")
-                    self.custom_logger.info(f"parsed date and time : {date_ymd} {time_hm}")
 
                     performances.append(
                         {
@@ -217,7 +200,6 @@ class TheatreAjaxExtractor(BaseExtractor):
 
         for seat_elem in seats:
             try:
-                # Extract structured attributes provided by OvationTix SVG items
                 class_attr = seat_elem.get_attribute("class") or ""
                 is_available = "selectable" in class_attr and "occupied" not in class_attr and "sold" not in class_attr
 
@@ -229,7 +211,6 @@ class TheatreAjaxExtractor(BaseExtractor):
                 seat_num = seat_elem.get_attribute("data-seat") or seat_elem.get_attribute("data-seat-number") or ""
                 price_str = seat_elem.get_attribute("data-price") or "0"
 
-                # Parse price and currency
                 price_match = re.search(r"[\d\.]+", price_str)
                 price_val = float(price_match.group()) if price_match else 0.0
                 curr = get_currency_from_price(price_str)
@@ -256,7 +237,7 @@ class TheatreAjaxExtractor(BaseExtractor):
         encountered_no_seatmap = False
         encountered_sold_out = False
 
-        for i, perf in enumerate(performances, start=1):
+        for perf in performances:
             key = format_datetime_key(perf["date"], perf["time"])
             if not key:
                 continue
@@ -290,27 +271,27 @@ class TheatreAjaxExtractor(BaseExtractor):
 
         return seat_pricing, currency, capacity
 
-    def _scrape_one_show(self, sb, see_btn_element, category: str) -> dict | None:
+    def _scrape_one_show(self, sb, see_btn_element, category: str, show_idx: int = None) -> dict | None:
+        title, subtitle, open_date, close_date = None, None, None, None
+
+        if show_idx is not None and self.show_details and show_idx < len(self.show_details):
+            show = self.show_details[show_idx]
+            title = show.get("title")
+            subtitle = show.get("subtitle")
+            open_date = show.get("open_date")
+            close_date = show.get("close_date")
+
         try:
             sb.execute_script("arguments[0].scrollIntoView({block:'center'});", see_btn_element)
             sb.execute_script("arguments[0].click();", see_btn_element)
             human_delay(2, 3)
-            self.custom_logger.info(f"see_btn_element clicked:")
+            self.custom_logger.info("see_btn_element clicked")
         except Exception as e:
             self.custom_logger.warning(f"Failed opening show detail: {e}")
             return None
         
         human_delay(2, 4)
-
         current_url = sb.get_current_url()
-        
-        title = self.show_details.get("title") if self.show_details else None
-        subtitle = self.show_details.get("subtitle") if self.show_details else None
-        open_date = self.show_details.get("open_date") if self.show_details else None
-        close_date = self.show_details.get("close_date") if self.show_details else None
-
-        venue_url = current_url
-
 
         theatre_details = self._get_event_venue(sb) or DEFAULT_THEATRE_DETAILS
         theatre_name = theatre_details.get("venue")
@@ -330,9 +311,9 @@ class TheatreAjaxExtractor(BaseExtractor):
         self.custom_logger.info("Address: %s", address)
         self.custom_logger.info("-" * 50)
 
-        human_delay(10, 12.5)
+        human_delay(4, 6)
         human_scroll(sb)
-        time.sleep(3)
+        time.sleep(2)
 
         performances = self._extract_performances(sb)
         if not performances:
@@ -349,7 +330,7 @@ class TheatreAjaxExtractor(BaseExtractor):
             "title": title,
             "category": standardize_category(category),
             "venue": theatre_name,
-            "venue_url": venue_url,
+            "venue_url": current_url,
             "address": address,
             "city": city,
             "country": country,
@@ -366,27 +347,6 @@ class TheatreAjaxExtractor(BaseExtractor):
             "is_limited_run": None,
             "scrape_datetime": get_scrape_datetime(),
         }
-
-    def _scrape_shows(self, sb, show_links: list, category: str) -> None:
-        _MAX_PASSES = 3
-        pending = list(show_links)
-
-        for _pass in range(1, _MAX_PASSES + 1):
-            if not pending:
-                break
-
-            still_pending = []
-            for show_url in pending:
-                row = self._scrape_one_show(sb, show_url, category)
-                if row is None:
-                    still_pending.append(show_url)
-                else:
-                    self.all_data.append(row)
-                    self.log_record(row)
-                    human_delay(8, 15)
-
-            pending = still_pending
-
 
     def extract(self) -> bytes:
         self.all_data = []
@@ -414,25 +374,22 @@ class TheatreAjaxExtractor(BaseExtractor):
                     self.custom_logger.warning(f"Error occurred while fetching show details: {e}")
 
                 buttons = sb.find_elements(SELECTORS["see_event_button"])
-                self.custom_logger.info(f"Found {len(buttons)} see this events buttons .")
+                self.custom_logger.info(f"Found {len(buttons)} see this events buttons.")
                 
                 if self.local_test:
                     buttons = buttons[: self.show_count]
 
                 for i in range(len(buttons)):
-                    # Re-query elements per iteration to prevent stale reference errors
                     current_buttons = sb.find_elements(SELECTORS["see_event_button"])
                     if i < len(current_buttons):
-                        row = self._scrape_one_show(sb, current_buttons[i], category)
+                        row = self._scrape_one_show(sb, current_buttons[i], category, show_idx=i)
                         if row:
                             self.all_data.append(row)
                             self.log_record(row)
-                        # Return back to primary event listing page
                         self.safe_get(sb, url)
 
         return json.dumps(self.all_data, default=str).encode("utf-8")
 
-    
     def _parse(self, _raw: bytes):
         df = pd.DataFrame(self.all_data)
         self.custom_logger.info("Parsing completed. Extracted %s shows", len(df))
