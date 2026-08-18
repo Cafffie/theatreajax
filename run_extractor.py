@@ -123,14 +123,7 @@ class TheatreAjaxExtractor(BaseExtractor):
 
         return show_details
 
-    def _get_terminal_dates(self, sb):
-        """Extract show header dates."""
-        try:
-            return sb.get_text(SELECTORS["terminal_date"]).strip() or None
-        except Exception as e:
-            self.custom_logger.debug(f"terminal date extraction failed: {e}")
-            return None
-
+    
     def _get_event_venue(self, sb) -> dict | None:
         """Extract an event-specific venue from the current show page."""
         try:
@@ -162,15 +155,20 @@ class TheatreAjaxExtractor(BaseExtractor):
                     date_time_text = block.text.strip() or None
                     if not date_time_text:
                         continue
+                    self.custom_logger.info(f"Performance date_string: {date_time_text}")
 
                     date_ymd = parser.parse(date_time_text, fuzzy=True).strftime("%Y-%m-%d")
                     time_hm = parser.parse(date_time_text, fuzzy=True).strftime("%H:%M")
+                    #time_hm = convert_to_24hr(date_time_text)
+                    self.custom_logger.info(f"parsed date and time : {date_ymd} {time_hm}")
+
+                    time_buttons = block.find_element(By.CSS_SELECTOR, SELECTORS["time_buttons"])
 
                     performances.append(
                         {
                             "date": date_ymd,
                             "time": time_hm,
-                            "element": block,
+                            "time_buttons": time_buttons,
                         }
                     )
                 except Exception as inner_e:
@@ -242,10 +240,18 @@ class TheatreAjaxExtractor(BaseExtractor):
             if not key:
                 continue
 
+            time_buttons = perf.get("time_buttons")
+            if not time_buttons:
+                seat_pricing[key] = []
+                encountered_no_seatmap = True
+                continue
+
             try:
-                target_btn = perf.get("element")
-                if target_btn:
-                    sb.execute_script("arguments[0].click();", target_btn)
+                time_buttons = perf.get("time_buttons")
+                if time_buttons:
+                    # Scroll element into view and click using JavaScript to prevent click interception issues
+                    sb.execute_script("arguments[0].scrollIntoView({block: 'center'});", time_buttons)
+                    sb.execute_script("arguments[0].click();", time_buttons)
                     human_delay(2.0, 3.5)
 
                 seat_list, perf_currency, perf_capacity, status = self.parse_seat_map(sb)
