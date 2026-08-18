@@ -77,12 +77,51 @@ class TheatreAjaxExtractor(BaseExtractor):
         except Exception:
             pass
 
-    def _get_show_title(self, sb) -> str | None:
+    def _get_show_details(self, sb) -> str | None:
         """Extract show title."""
+
+        show_details= []
         try:
-            return sb.get_text(SELECTORS["title"]).strip() or None
-        except Exception:
-            return None
+            show_card = sb.find_element(SELECTORS["show_card"])
+            self.custom_logger.info(f"Found {len(show_card)} show cards for extraction.")
+            for card in show_card:
+                try:
+                    title_elem = card.find_element(By.CSS_SELECTOR, SELECTORS["title"])
+                    titles = title_elem.text.strip() if title_elem else ""
+                    self.custom_logger.info(f"Found title: {titles}")
+                    
+                    subtitle_elem = card.find_element(By.CSS_SELECTOR, SELECTORS["subtitle"])
+                    subtitle = subtitle_elem.text.strip() if subtitle_elem else ""
+                    self.custom_logger.info(f"Found subtitle: {subtitle}")
+
+                    open_date, close_date = None, None
+                    try:
+                        terminal_elem = card.find_element(By.CSS_SELECTOR, SELECTORS["terminal_date"])
+                        terminal_date = terminal_elem.text.strip() if terminal_elem else ""
+                        if terminal_date:
+                            booking_dates = parse_booking_dates(terminal_date)
+                            open_date = booking_dates.get("start_date")
+                            close_date = booking_dates.get("end_date")
+                    except Exception:
+                        pass
+
+                    see_event_button = card.find_element(By.CSS_SELECTOR, SELECTORS["see_this_event_button"])
+                
+                    show_details.append({
+                        "title": titles,    
+                        "subtitle": subtitle,
+                        "open_date": open_date,
+                        "close_date": close_date,
+                        "see_event_button": see_event_button
+                    })
+
+                except Exception as e:
+                    self.custom_logger.debug(f"Error occurred while extracting show details: {e}")
+                    continue
+            
+        except Exception as e:
+            self.custom_logger.debug(f"Show details extraction failed: {e}")
+            return show_details
 
     def _get_terminal_dates(self, sb):
         """Extract show header dates."""
@@ -91,6 +130,8 @@ class TheatreAjaxExtractor(BaseExtractor):
         except Exception as e:
             self.custom_logger.debug(f"terminal date extraction failed: {e}")
             return None
+
+    
 
     def _get_event_venue(self, sb) -> dict | None:
         """Extract an event-specific venue from the current show page."""
@@ -105,7 +146,7 @@ class TheatreAjaxExtractor(BaseExtractor):
                     return venue_details
         except Exception as e:
             self.custom_logger.warning(
-                "Event-specific venue extraction failed: %s", e
+                "Event-specific venue extraction failed, falling back to default address: %s", e
             )
 
         return DEFAULT_THEATRE_DETAILS
@@ -115,6 +156,15 @@ class TheatreAjaxExtractor(BaseExtractor):
     def _extract_performances(self, sb) -> list[dict]:
         """Parses performance instances directly from single or continuous date markers."""
         performances = []
+        #try:
+            #see_event_button = sb.find_elements(SELECTORS["see_event_button"])
+            #if see_event_button:
+                #sb.execute_script("arguments[0].click();", see_event_button)
+                #human_delay(2, 3)
+                #self.custom_logger.info("Clicked see_event_button.")
+        #except Exception as e:
+            #self.custom_logger.debug(f"Failed clicking 'See Event' button: {e}")
+
         sb.wait_for_ready_state_complete()
         try:
             date_blocks = sb.find_elements(By.CSS_SELECTOR, SELECTORS["date_blocks"])
@@ -129,7 +179,9 @@ class TheatreAjaxExtractor(BaseExtractor):
                     self.custom_logger.info(f"Performance date_string: {date_time_text}")
 
                     date_ymd = parser.parse(date_time_text, fuzzy=True).strftime("%Y-%m-%d")
-                    time_hm = convert_to_24hr(date_time_text)
+                    #time_hm = convert_to_24hr(date_time_text)
+                    time_hm = parser.parse(date_time_text, fuzzy=True).strftime("%H:%M")
+                    self.custom_logger.info(f"parsed date and time : {date_ymd} {time_hm}")
 
                     performances.append(
                         {
@@ -243,25 +295,44 @@ class TheatreAjaxExtractor(BaseExtractor):
             sb.execute_script("arguments[0].scrollIntoView({block:'center'});", see_btn_element)
             sb.execute_script("arguments[0].click();", see_btn_element)
             human_delay(2, 3)
+            self.custom_logger.info(f"see_btn_element clicked:")
         except Exception as e:
             self.custom_logger.warning(f"Failed opening show detail: {e}")
             return None
         
         human_delay(2, 4)
 
-        title = self._get_show_title(sb)
-        if not title:
-            self.custom_logger.warning("No title found for: %s", show_url)
+        current_url = sb.get_current_url()
+        
+        title = self.show_details.get("title") if self.show_details else None
+        subtitle = self.show_details.get("subtitle") if self.show_details else None
+        open_date = self.show_details.get("open_date") if self.show_details else None
+        close_date = self.show_details.get("close_date") if self.show_details else None
 
-        venue_url = sb.get_current_url()
-        terminal_date = self._get_terminal_dates(sb)
-        open_date, close_date = self._parse_terminal_date(terminal_date)
+        venue_url = current_url
+
 
         theatre_details = self._get_event_venue(sb) or DEFAULT_THEATRE_DETAILS
         theatre_name = theatre_details.get("venue")
         address = theatre_details.get("address")
         city = theatre_details.get("city")
         country = normalize_country(theatre_details.get("country"))
+
+        self.accept_cookies(sb)
+        human_delay(2, 4)
+
+        self.custom_logger.info("Category: %s", category)
+        self.custom_logger.info("Title: %s", title)
+        self.custom_logger.info("Subtitle: %s", subtitle)
+        self.custom_logger.info("Open Date: %s", open_date)
+        self.custom_logger.info("Close Date: %s", close_date)
+        self.custom_logger.info("Venue: %s", theatre_name)
+        self.custom_logger.info("Address: %s", address)
+        self.custom_logger.info("-" * 50)
+
+        human_delay(10, 12.5)
+        human_scroll(sb)
+        time.sleep(3)
 
         performances = self._extract_performances(sb)
         if not performances:
@@ -337,7 +408,14 @@ class TheatreAjaxExtractor(BaseExtractor):
                 sb.maximize_window()
                 self.accept_cookies(sb)
 
+                try:
+                    self.show_details = self._get_show_details(sb)
+                except Exception as e:
+                    self.custom_logger.warning(f"Error occurred while fetching show details: {e}")
+
                 buttons = sb.find_elements(SELECTORS["see_event_button"])
+                self.custom_logger.info(f"Found {len(buttons)} see this events buttons .")
+                
                 if self.local_test:
                     buttons = buttons[: self.show_count]
 
