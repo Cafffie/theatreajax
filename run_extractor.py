@@ -4,9 +4,9 @@ import random
 import re
 import sys
 import time
-from datetime import datetime
 
 import pandas as pd
+from datetime import datetime
 from dateutil import parser
 from selenium.webdriver.common.by import By
 from seleniumbase import SB
@@ -14,6 +14,7 @@ from seleniumbase import SB
 from utils.base_extractor import BaseExtractor
 from utils.logger import setup_logger
 from utils.scraping_helpers import (
+    convert_to_24hr,
     format_datetime_key,
     get_currency_from_price,
     get_scrape_datetime,
@@ -23,7 +24,7 @@ from utils.scraping_helpers import (
     standardize_category,
 )
 
-from .qpac_config import (
+from .theatre_ajax_config import (
     DEFAULT_CURRENCY,
     DEFAULT_THEATRE_DETAILS,
     PAGES,
@@ -31,15 +32,17 @@ from .qpac_config import (
     THEATRE_DETAILS_MAP,
 )
 
+# from datetime import datetime
+
 logger = setup_logger(__name__, log_to_file=False)
 
 
-class QpacExtractor(BaseExtractor):
-    """Extractor for qpac website."""
+class TheatreAjaxExtractor(BaseExtractor):
+    """Extractor for theatre_ajax website."""
 
     def __init__(self, local_test=False, show_count=2, **kwargs):
         super().__init__(
-            site_id="qpac",
+            site_id="theatre_ajax",
             log_to_file=False,
             log_to_terminal=True,
             local_test=local_test,
@@ -77,15 +80,12 @@ class QpacExtractor(BaseExtractor):
         except Exception:
             pass
 
-    
     def _get_show_title(self, sb) -> str | None:
         """Extract show title."""
         try:
             return sb.get_text(SELECTORS["title"]).strip() or None
         except Exception:
             return None
-
-
 
     def _get_terminal_dates(self, sb):
         """Extract show header dates."""
@@ -94,7 +94,6 @@ class QpacExtractor(BaseExtractor):
         except Exception as e:
             self.custom_logger.debug(f"terminal date extraction failed: {e}")
             return None
-
 
     def _get_event_venue(self, sb) -> dict | None:
         """Extract an event-specific venue from the current show page."""
@@ -130,7 +129,9 @@ class QpacExtractor(BaseExtractor):
 
             for block in date_blocks:
                 try:
-                    date_time_text = block.get_text(SELECTORS["date_time_text"]).strip() or None
+                    date_time_text = (
+                        block.get_text(SELECTORS["date_time_text"]).strip() or None
+                    )
 
                     if not date_time_text:
                         self.custom_logger.info(
@@ -138,14 +139,17 @@ class QpacExtractor(BaseExtractor):
                         )
                         continue
 
-                    self.custom_logger.info(f" performance date_string : {date_time_text}")
+                    self.custom_logger.info(
+                        f" performance date_string : {date_time_text}"
+                    )
 
-                    date_button = sb.find_elements(By.CSS_SELECTOR, SELECTORS["date_blocks"])
+                    date_button = sb.find_elements(
+                        By.CSS_SELECTOR, SELECTORS["date_blocks"]
+                    )
 
                     date_ymd = parser.parse(date_time_text).strftime("%Y-%m-%d")
-                    #time_hm = parser.parse(raw_time_text).strftime("%H:%M")
+                    # time_hm = parser.parse(raw_time_text).strftime("%H:%M")
                     time_hm = convert_to_24hr(date_time_text)
-        
 
                     performances.append(
                         {
